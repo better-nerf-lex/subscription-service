@@ -155,7 +155,7 @@ export class CreateInitialTables1708000000000 implements MigrationInterface {
         name: 'IDX_SUBSCRIPTIONS_UNIQUE_ENTITY_ACTIVE',
         columnNames: ['entity_id', 'entity_type'],
         isUnique: true,
-        where: "deleted_at IS NULL AND valid_until > CURRENT_TIMESTAMP",
+        where: 'deleted_at IS NULL AND valid_until > CURRENT_TIMESTAMP',
       }),
     );
 

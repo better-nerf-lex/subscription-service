@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { SubscriptionsService } from './subscriptions.service';
 import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
@@ -9,8 +8,6 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 
 describe('SubscriptionsService', () => {
   let service: SubscriptionsService;
-  let subscriptionRepository: Repository<Subscription>;
-  let stripeDetailsRepository: Repository<StripeDetails>;
 
   const mockSubscriptionRepository = {
     create: jest.fn(),
@@ -44,12 +41,6 @@ describe('SubscriptionsService', () => {
     }).compile();
 
     service = module.get<SubscriptionsService>(SubscriptionsService);
-    subscriptionRepository = module.get<Repository<Subscription>>(
-      getRepositoryToken(Subscription),
-    );
-    stripeDetailsRepository = module.get<Repository<StripeDetails>>(
-      getRepositoryToken(StripeDetails),
-    );
   });
 
   afterEach(() => {

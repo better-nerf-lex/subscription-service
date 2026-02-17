@@ -51,9 +51,7 @@ export class SubscriptionsController {
   }
 
   @Get(':id')
-  async getSubscription(
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<SubscriptionResponseDto> {
+  async getSubscription(@Param('id', ParseUUIDPipe) id: string): Promise<SubscriptionResponseDto> {
     const subscription = await this.subscriptionsService.findById(id);
     return SubscriptionResponseDto.fromEntity(subscription);
   }

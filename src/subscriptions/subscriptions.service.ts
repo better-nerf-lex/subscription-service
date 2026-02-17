@@ -1,11 +1,6 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, LessThan, MoreThan } from 'typeorm';
+import { Repository, IsNull, MoreThan } from 'typeorm';
 import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
@@ -26,10 +21,7 @@ export class SubscriptionsService {
    */
   async createSubscription(createDto: CreateSubscriptionDto): Promise<Subscription> {
     // Check if active subscription already exists for this entity
-    const existingActive = await this.findActiveByEntity(
-      createDto.entityId,
-      createDto.entityType,
-    );
+    const existingActive = await this.findActiveByEntity(createDto.entityId, createDto.entityType);
 
     if (existingActive.length > 0) {
       throw new ConflictException('Active subscription already exists for this entity');
