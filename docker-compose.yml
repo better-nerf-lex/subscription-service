@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  subscription-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: subscription-service
+    env_file:
+      - .env.docker
+    environment:
+      DB_HOST: gateway-postgres
+      DB_PORT: 5432
+      DB_USERNAME: gateway_user
+      DB_PASSWORD: gateway_password
+      DB_NAME: subscription_service
+      DB_SYNCHRONIZE: 'false'
+      PORT: 3002
+      NODE_ENV: development
+      GATEWAY_SERVICE_URL: http://gateway:8081
+    ports:
+      - '3002:3002'
+    networks:
+      - gateway-network
+    depends_on:
+      - postgres-init
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3002/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service to initialize the subscription database
+  postgres-init:
+    image: postgres:16-alpine
+    container_name: subscription-postgres-init
+    environment:
+      PGPASSWORD: gateway_password
+    networks:
+      - gateway-network
+    entrypoint: >
+      sh -c "
+      echo 'Waiting for PostgreSQL to be ready...';
+      until pg_isready -h gateway-postgres -U gateway_user -d gateway; do
+        sleep 2;
+      done;
+      echo 'PostgreSQL is ready. Creating subscription_service database...';
+      psql -h gateway-postgres -U gateway_user -d gateway -tc \"SELECT 1 FROM pg_database WHERE datname = 'subscription_service'\" | grep -q 1 || psql -h gateway-postgres -U gateway_user -d gateway -c 'CREATE DATABASE subscription_service';
+      echo 'Database setup complete.';
+      "
+
+# Use the existing gateway network
+networks:
+  gateway-network:
+    external: true

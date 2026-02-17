@@ -1,0 +1,49 @@
+version: '3.8'
+
+# Local development setup with standalone PostgreSQL
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: subscription-postgres-local
+    environment:
+      POSTGRES_USER: gateway_user
+      POSTGRES_PASSWORD: gateway_password
+      POSTGRES_DB: subscription_service
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gateway_user -d subscription_service']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  subscription-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: subscription-service-local
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: gateway_user
+      DB_PASSWORD: gateway_password
+      DB_NAME: subscription_service
+      DB_SYNCHRONIZE: 'false'
+      PORT: 3002
+      NODE_ENV: development
+      GATEWAY_SERVICE_URL: http://host.docker.internal:8081
+    ports:
+      - '3002:3002'
+    volumes:
+      - ./src:/app/src
+      - ./node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npm run start:dev
+
+volumes:
+  postgres_data_local:
