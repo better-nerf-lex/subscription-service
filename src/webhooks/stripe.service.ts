@@ -8,10 +8,19 @@ export class StripeService {
     readonly webhookSecret: string;
 
     constructor(private readonly configService: ConfigService) {
-        this.client = new Stripe(this.configService.getOrThrow<string>('STRIPE_API_KEY'), {
+        const stripeConfig = this.configService.getOrThrow<{ apiKey: string; webhookSecret: string }>('stripe');
+
+        if (!stripeConfig.apiKey) {
+            throw new Error('STRIPE_API_KEY is not defined or empty');
+        }
+        if (!stripeConfig.webhookSecret) {
+            throw new Error('STRIPE_WEBHOOK_SECRET is not defined or empty');
+        }
+
+        this.client = new Stripe(stripeConfig.apiKey, {
             apiVersion: '2025-02-24.acacia',
         });
-        this.webhookSecret = this.configService.getOrThrow<string>('STRIPE_WEBHOOK_SECRET');
+        this.webhookSecret = stripeConfig.webhookSecret;
     }
 
     constructEvent(rawBody: Buffer, signature: string): Stripe.Event {
