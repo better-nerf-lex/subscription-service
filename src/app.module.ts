@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { databaseConfig } from './config/database.config';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { HealthModule } from './health/health.module';
+import { StripeWebhookModule } from './webhooks/stripe-webhook.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { HealthModule } from './health/health.module';
     }),
     SubscriptionsModule,
     HealthModule,
+    StripeWebhookModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }
