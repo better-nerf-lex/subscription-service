@@ -24,8 +24,8 @@ export class MockSubscriptionSeeder implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    if (process.env.NODE_ENV === 'production') {
-      this.logger.log('Skipping mock subscription seed (NODE_ENV=production)');
+    if (process.env.ENABLE_MOCK_SEED !== 'true') {
+      this.logger.log('Skipping mock subscription seed (ENABLE_MOCK_SEED is not "true")');
       return;
     }
 
