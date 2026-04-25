@@ -13,7 +13,7 @@ RUN npm ci
 COPY . .
 
 # Expose port
-EXPOSE 3002
+EXPOSE 8080
 
 # Start in development mode
 CMD ["npm", "run", "start:dev"]
@@ -64,11 +64,11 @@ RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expose port
-EXPOSE 3002
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
 # Start the application
 CMD ["node", "dist/main"]
