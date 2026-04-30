@@ -5,6 +5,8 @@ import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
 import { EntityType } from '../common/enums/entity-type.enum';
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BillingCycleService } from './billing-cycle.service';
+import { TokenLedgerService } from './token-ledger.service';
 
 describe('SubscriptionsService', () => {
   let service: SubscriptionsService;
@@ -36,6 +38,11 @@ describe('SubscriptionsService', () => {
         {
           provide: getRepositoryToken(StripeDetails),
           useValue: mockStripeDetailsRepository,
+        },
+        BillingCycleService,
+        {
+          provide: TokenLedgerService,
+          useValue: { grantSubscriptionTokens: jest.fn() },
         },
       ],
     }).compile();

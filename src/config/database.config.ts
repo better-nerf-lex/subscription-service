@@ -2,6 +2,19 @@ import { registerAs } from '@nestjs/config';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
+import { StripeEvent } from '../entities/stripe-event.entity';
+import { TokenGrant } from '../entities/token-grant.entity';
+import { TokenReservation } from '../entities/token-reservation.entity';
+import { TokenReservationDebit } from '../entities/token-reservation-debit.entity';
+
+const entities = [
+  Subscription,
+  StripeDetails,
+  StripeEvent,
+  TokenGrant,
+  TokenReservation,
+  TokenReservationDebit,
+];
 
 export const databaseConfig = registerAs('database', (): DataSourceOptions => {
   const isDbSslEnabled = process.env.DB_SSL === 'true';
@@ -14,7 +27,7 @@ export const databaseConfig = registerAs('database', (): DataSourceOptions => {
     username: process.env.DB_USERNAME || 'gateway_user',
     password: process.env.DB_PASSWORD || 'gateway_password',
     database: process.env.DB_NAME || 'subscription_service',
-    entities: [Subscription, StripeDetails],
+    entities,
     migrations: ['dist/migrations/*.js'],
     synchronize: process.env.DB_SYNCHRONIZE === 'true',
     ssl: isDbSslEnabled ? { rejectUnauthorized: dbSslRejectUnauthorized } : false,
@@ -33,7 +46,7 @@ export default new DataSource({
   username: process.env.DB_USERNAME || 'gateway_user',
   password: process.env.DB_PASSWORD || 'gateway_password',
   database: process.env.DB_NAME || 'subscription_service',
-  entities: [Subscription, StripeDetails],
+  entities,
   migrations: ['src/migrations/*.ts'],
   synchronize: false,
   ssl: isDbSslEnabled ? { rejectUnauthorized: dbSslRejectUnauthorized } : false,

@@ -6,6 +6,21 @@ import { StripeDetails } from '../entities/stripe-details.entity';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { QuerySubscriptionsDto } from './dto/query-subscriptions.dto';
 import { EntityType } from '../common/enums/entity-type.enum';
+import { BillingPlan } from '../common/enums/billing-plan.enum';
+import { BillingCycleService } from './billing-cycle.service';
+import { TokenLedgerService } from './token-ledger.service';
+
+interface SyncStripeSubscriptionInput {
+  stripeSubId: string;
+  stripePriceId: string;
+  entityId: string;
+  entityType: EntityType;
+  plan: BillingPlan;
+  status: string;
+  periodStart: Date;
+  periodEnd?: Date | null;
+  stripeInvoiceId?: string | null;
+}
 
 @Injectable()
 export class SubscriptionsService {
@@ -14,6 +29,8 @@ export class SubscriptionsService {
     private readonly subscriptionRepository: Repository<Subscription>,
     @InjectRepository(StripeDetails)
     private readonly stripeDetailsRepository: Repository<StripeDetails>,
+    private readonly billingCycle: BillingCycleService,
+    private readonly tokenLedgerService: TokenLedgerService,
   ) {}
 
   /**
@@ -45,6 +62,9 @@ export class SubscriptionsService {
       stripeDetailsId: stripeDetails.id,
       entityId: createDto.entityId,
       entityType: createDto.entityType,
+      plan: null,
+      anchorDay: this.billingCycle.normalizeAnchorDay(new Date()),
+      status: 'active',
       validUntil: new Date(createDto.validUntil),
     });
 
@@ -139,6 +159,64 @@ export class SubscriptionsService {
     subscription.validUntil = newValidUntil;
 
     return this.subscriptionRepository.save(subscription);
+  }
+
+  async syncStripeSubscription(input: SyncStripeSubscriptionInput): Promise<Subscription> {
+    let stripeDetails = await this.stripeDetailsRepository.findOne({
+      where: { stripeSubId: input.stripeSubId },
+    });
+
+    if (!stripeDetails) {
+      stripeDetails = this.stripeDetailsRepository.create({
+        stripeSubId: input.stripeSubId,
+        stripePriceId: input.stripePriceId,
+      });
+      stripeDetails = await this.stripeDetailsRepository.save(stripeDetails);
+    } else if (stripeDetails.stripePriceId !== input.stripePriceId) {
+      stripeDetails.stripePriceId = input.stripePriceId;
+      stripeDetails = await this.stripeDetailsRepository.save(stripeDetails);
+    }
+
+    const anchorDay = this.billingCycle.normalizeAnchorDay(input.periodStart);
+    const periodEnd = input.periodEnd ?? this.billingCycle.nextPeriodEnd(input.periodStart, anchorDay);
+
+    let subscription = await this.subscriptionRepository.findOne({
+      where: { stripeDetailsId: stripeDetails.id, deletedAt: IsNull() },
+    });
+
+    if (!subscription) {
+      subscription = this.subscriptionRepository.create({
+        stripeDetailsId: stripeDetails.id,
+        entityId: input.entityId,
+        entityType: input.entityType,
+      });
+    }
+
+    subscription.entityId = input.entityId;
+    subscription.entityType = input.entityType;
+    subscription.plan = input.plan;
+    subscription.anchorDay = anchorDay;
+    subscription.currentPeriodStart = input.periodStart;
+    subscription.currentPeriodEnd = periodEnd;
+    subscription.validUntil = periodEnd;
+    subscription.status = input.status;
+
+    const saved = await this.subscriptionRepository.save(subscription);
+
+    if (input.status === 'active' || input.status === 'trialing') {
+      await this.tokenLedgerService.grantSubscriptionTokens({
+        entityId: input.entityId,
+        entityType: input.entityType,
+        plan: input.plan,
+        stripeSubscriptionId: input.stripeSubId,
+        stripeInvoiceId: input.stripeInvoiceId ?? null,
+        stripePriceId: input.stripePriceId,
+        periodStart: input.periodStart,
+        periodEnd,
+      });
+    }
+
+    return saved;
   }
 
   /**

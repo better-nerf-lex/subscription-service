@@ -18,10 +18,22 @@ import { RenewSubscriptionDto } from './dto/renew-subscription.dto';
 import { QuerySubscriptionsDto } from './dto/query-subscriptions.dto';
 import { SubscriptionResponseDto } from './dto/subscription-response.dto';
 import { EntityType } from '../common/enums/entity-type.enum';
+import { BillingCheckoutService } from './billing-checkout.service';
+import { TokenLedgerService } from './token-ledger.service';
+import {
+  CheckoutSessionResponseDto,
+  CreateSubscriptionCheckoutDto,
+  CreateTopUpCheckoutDto,
+} from './dto/checkout-session.dto';
+import { ReservationKeyDto, ReserveTokensDto, TokenStatusDto } from './dto/token.dto';
 
 @Controller('api/v1/subscriptions')
 export class SubscriptionsController {
-  constructor(private readonly subscriptionsService: SubscriptionsService) {}
+  constructor(
+    private readonly subscriptionsService: SubscriptionsService,
+    private readonly billingCheckoutService: BillingCheckoutService,
+    private readonly tokenLedgerService: TokenLedgerService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -48,6 +60,57 @@ export class SubscriptionsController {
       limit: query.limit ?? 50,
       offset: query.offset ?? 0,
     };
+  }
+
+  @Post('checkout/subscription')
+  @HttpCode(HttpStatus.OK)
+  async createSubscriptionCheckout(
+    @Body(ValidationPipe) request: CreateSubscriptionCheckoutDto,
+  ): Promise<CheckoutSessionResponseDto> {
+    return this.billingCheckoutService.createSubscriptionCheckout(
+      request.entityId,
+      request.entityType,
+      request.plan,
+    );
+  }
+
+  @Post('checkout/top-up')
+  @HttpCode(HttpStatus.OK)
+  async createTopUpCheckout(
+    @Body(ValidationPipe) request: CreateTopUpCheckoutDto,
+  ): Promise<CheckoutSessionResponseDto> {
+    return this.billingCheckoutService.createTopUpCheckout(
+      request.entityId,
+      request.entityType,
+      request.pack,
+    );
+  }
+
+  @Post('tokens/reserve')
+  @HttpCode(HttpStatus.OK)
+  async reserveTokens(@Body(ValidationPipe) request: ReserveTokensDto): Promise<{ reservationKey: string; status: string }> {
+    const reservation = await this.tokenLedgerService.reserveTokens(
+      request.entityId,
+      request.entityType,
+      request.reservationKey,
+      request.amount,
+      request.documentId,
+    );
+    return { reservationKey: reservation.reservationKey, status: reservation.status };
+  }
+
+  @Post('tokens/commit')
+  @HttpCode(HttpStatus.OK)
+  async commitReservation(@Body(ValidationPipe) request: ReservationKeyDto): Promise<{ reservationKey: string; status: string }> {
+    const reservation = await this.tokenLedgerService.commitReservation(request.reservationKey);
+    return { reservationKey: reservation.reservationKey, status: reservation.status };
+  }
+
+  @Post('tokens/refund')
+  @HttpCode(HttpStatus.OK)
+  async refundReservation(@Body(ValidationPipe) request: ReservationKeyDto): Promise<{ reservationKey: string; status: string }> {
+    const reservation = await this.tokenLedgerService.refundReservation(request.reservationKey);
+    return { reservationKey: reservation.reservationKey, status: reservation.status };
   }
 
   @Get(':id')
@@ -91,6 +154,14 @@ export class SubscriptionsController {
       entityType,
       isActive,
     };
+  }
+
+  @Get('entity/:entityType/:entityId/billing')
+  async getBillingStatus(
+    @Param('entityType') entityType: EntityType,
+    @Param('entityId') entityId: string,
+  ): Promise<TokenStatusDto> {
+    return this.tokenLedgerService.getStatus(entityId, entityType);
   }
 
   @Put(':id/renew')

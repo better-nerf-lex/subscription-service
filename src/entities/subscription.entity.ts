@@ -10,6 +10,7 @@ import {
   Index,
 } from 'typeorm';
 import { EntityType } from '../common/enums/entity-type.enum';
+import { BillingPlan } from '../common/enums/billing-plan.enum';
 import { StripeDetails } from './stripe-details.entity';
 
 /**
@@ -35,6 +36,21 @@ export class Subscription {
     enum: EntityType,
   })
   entityType: EntityType;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  plan?: BillingPlan | null;
+
+  @Column({ name: 'anchor_day', type: 'integer', default: 1 })
+  anchorDay: number;
+
+  @Column({ name: 'current_period_start', type: 'timestamp', nullable: true })
+  currentPeriodStart?: Date | null;
+
+  @Column({ name: 'current_period_end', type: 'timestamp', nullable: true })
+  currentPeriodEnd?: Date | null;
+
+  @Column({ type: 'varchar', length: 50, default: 'active' })
+  status: string;
 
   @Column({ name: 'valid_until', type: 'timestamp' })
   @Index()

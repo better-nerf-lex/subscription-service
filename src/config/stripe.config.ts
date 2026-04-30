@@ -13,5 +13,13 @@ export const stripeConfig = registerAs('stripe', () => {
     return {
         apiKey,
         webhookSecret,
+        successUrl: process.env.STRIPE_CHECKOUT_SUCCESS_URL || 'http://localhost:8080/billing?checkout=success',
+        cancelUrl: process.env.STRIPE_CHECKOUT_CANCEL_URL || 'http://localhost:8080/billing?checkout=cancelled',
+        prices: {
+            solo: process.env.STRIPE_PRICE_SOLO_MONTHLY,
+            team: process.env.STRIPE_PRICE_TEAM_MONTHLY,
+            tokens10: process.env.STRIPE_PRICE_TOPUP_10,
+            tokens100: process.env.STRIPE_PRICE_TOPUP_100,
+        },
     };
 });
