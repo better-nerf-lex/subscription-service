@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BillingPlan, TokenPack } from '../common/enums/billing-plan.enum';
 
@@ -7,6 +7,8 @@ export interface PlanConfig {
   priceId: string;
   name: string;
   monthlyTokens: number;
+  unitAmount: number;
+  currency: string;
 }
 
 export interface TokenPackConfig {
@@ -14,6 +16,8 @@ export interface TokenPackConfig {
   priceId: string;
   name: string;
   tokens: number;
+  unitAmount: number;
+  currency: string;
 }
 
 @Injectable()
@@ -27,15 +31,13 @@ export class BillingCatalogService {
     }>('stripe.prices');
     const priceId = plan === BillingPlan.SOLO ? prices.solo : prices.team;
 
-    if (!priceId) {
-      throw new InternalServerErrorException(`Stripe price is not configured for plan ${plan}`);
-    }
-
     return {
       plan,
-      priceId,
+      priceId: priceId ?? '',
       name: plan === BillingPlan.SOLO ? 'Solo' : 'Team',
       monthlyTokens: plan === BillingPlan.SOLO ? 10 : 100,
+      unitAmount: plan === BillingPlan.SOLO ? 15000 : 130000,
+      currency: 'pln',
     };
   }
 
@@ -46,43 +48,25 @@ export class BillingCatalogService {
     }>('stripe.prices');
     const priceId = pack === TokenPack.TOKENS_10 ? prices.tokens10 : prices.tokens100;
 
-    if (!priceId) {
-      throw new InternalServerErrorException(`Stripe price is not configured for token pack ${pack}`);
-    }
-
     return {
       pack,
-      priceId,
+      priceId: priceId ?? '',
       name: pack === TokenPack.TOKENS_10 ? '10 document tokens' : '100 document tokens',
       tokens: pack === TokenPack.TOKENS_10 ? 10 : 100,
+      unitAmount: pack === TokenPack.TOKENS_10 ? 10000 : 75000,
+      currency: 'pln',
     };
   }
 
   getPlanByPriceId(priceId: string): PlanConfig | null {
     return [BillingPlan.SOLO, BillingPlan.TEAM]
-      .map((plan) => this.getOptionalPlan(plan))
-      .find((plan) => plan?.priceId === priceId) ?? null;
+      .map((plan) => this.getPlan(plan))
+      .find((plan) => plan.priceId !== '' && plan.priceId === priceId) ?? null;
   }
 
   getPackByPriceId(priceId: string): TokenPackConfig | null {
     return [TokenPack.TOKENS_10, TokenPack.TOKENS_100]
-      .map((pack) => this.getOptionalPack(pack))
-      .find((pack) => pack?.priceId === priceId) ?? null;
-  }
-
-  private getOptionalPlan(plan: BillingPlan): PlanConfig | null {
-    try {
-      return this.getPlan(plan);
-    } catch {
-      return null;
-    }
-  }
-
-  private getOptionalPack(pack: TokenPack): TokenPackConfig | null {
-    try {
-      return this.getPack(pack);
-    } catch {
-      return null;
-    }
+      .map((pack) => this.getPack(pack))
+      .find((pack) => pack.priceId !== '' && pack.priceId === priceId) ?? null;
   }
 }
