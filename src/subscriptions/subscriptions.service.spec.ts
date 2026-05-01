@@ -5,12 +5,15 @@ import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
 import { TokenGrant } from '../entities/token-grant.entity';
 import { EntityType } from '../common/enums/entity-type.enum';
+import { BillingPlan, TokenGrantSource } from '../common/enums/billing-plan.enum';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { BillingCycleService } from './billing-cycle.service';
 import { TokenLedgerService } from './token-ledger.service';
+import { StripeService } from '../webhooks/stripe.service';
 
 describe('SubscriptionsService', () => {
   let service: SubscriptionsService;
+  let stripeService: StripeService;
 
   const mockSubscriptionRepository = {
     create: jest.fn(),
@@ -30,6 +33,12 @@ describe('SubscriptionsService', () => {
 
   const mockTokenGrantRepository = {
     softDelete: jest.fn(),
+    find: jest.fn(),
+    save: jest.fn(),
+  };
+
+  const mockTokenLedgerService = {
+    grantSubscriptionTokens: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -51,12 +60,23 @@ describe('SubscriptionsService', () => {
         BillingCycleService,
         {
           provide: TokenLedgerService,
-          useValue: { grantSubscriptionTokens: jest.fn() },
+          useValue: mockTokenLedgerService,
+        },
+        {
+          provide: StripeService,
+          useValue: {
+            client: {
+              subscriptions: {
+                update: jest.fn(),
+              },
+            },
+          },
         },
       ],
     }).compile();
 
     service = module.get<SubscriptionsService>(SubscriptionsService);
+    stripeService = module.get<StripeService>(StripeService);
   });
 
   afterEach(() => {
@@ -162,6 +182,115 @@ describe('SubscriptionsService', () => {
       const result = await service.isEntitySubscriptionActive('1', EntityType.USER);
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('syncStripeSubscription', () => {
+    it('moves unused solo tokens to carryover and cancels the old solo renewal on team upgrade', async () => {
+      const periodStart = new Date('2026-05-01T10:00:00Z');
+      const periodEnd = new Date('2026-06-01T10:00:00Z');
+      const teamStripeDetails = {
+        id: 'team-stripe-details',
+        stripeSubId: 'sub_team',
+        stripePriceId: 'price_team',
+      };
+      const createdTeamSubscription = {
+        id: 'team-subscription',
+        stripeDetailsId: teamStripeDetails.id,
+        entityId: 'team-1',
+        entityType: EntityType.TEAM,
+      };
+      const soloSubscription = {
+        id: 'solo-subscription',
+        stripeDetailsId: 'solo-stripe-details',
+        entityId: 'team-1',
+        entityType: EntityType.TEAM,
+        plan: BillingPlan.SOLO,
+        validUntil: periodEnd,
+        stripeDetails: {
+          stripeSubId: 'sub_solo',
+        },
+      };
+      const soloGrant = {
+        id: 'solo-grant',
+        source: TokenGrantSource.SUBSCRIPTION,
+        remainingTokens: 4,
+      };
+
+      mockStripeDetailsRepository.findOne.mockResolvedValue(teamStripeDetails);
+      mockSubscriptionRepository.findOne.mockResolvedValue(null);
+      mockSubscriptionRepository.create.mockReturnValue(createdTeamSubscription);
+      mockSubscriptionRepository.save.mockImplementation((subscription) => Promise.resolve(subscription));
+      mockSubscriptionRepository.find.mockResolvedValue([soloSubscription]);
+      mockTokenGrantRepository.find.mockResolvedValue([soloGrant]);
+      mockTokenGrantRepository.save.mockResolvedValue({ ...soloGrant, source: TokenGrantSource.CARRYOVER });
+      mockSubscriptionRepository.softDelete.mockResolvedValue({ affected: 1 });
+      mockTokenGrantRepository.softDelete.mockResolvedValue({ affected: 1 });
+      mockTokenLedgerService.grantSubscriptionTokens.mockResolvedValue({});
+
+      await service.syncStripeSubscription({
+        stripeSubId: 'sub_team',
+        stripePriceId: 'price_team',
+        entityId: 'team-1',
+        entityType: EntityType.TEAM,
+        plan: BillingPlan.TEAM,
+        status: 'active',
+        periodStart,
+        periodEnd,
+      });
+
+      expect(soloGrant.source).toBe(TokenGrantSource.CARRYOVER);
+      expect(mockTokenGrantRepository.save).toHaveBeenCalledWith(soloGrant);
+      expect(stripeService.client.subscriptions.update).toHaveBeenCalledWith('sub_solo', {
+        cancel_at_period_end: true,
+      });
+      expect(mockTokenLedgerService.grantSubscriptionTokens).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: BillingPlan.TEAM,
+          stripeSubscriptionId: 'sub_team',
+        }),
+      );
+    });
+
+    it('does not resurrect a replaced soft-deleted subscription when Stripe sends a later update', async () => {
+      const softDeletedSubscription = {
+        id: 'old-solo-subscription',
+        stripeDetailsId: 'solo-stripe-details',
+        entityId: 'team-1',
+        entityType: EntityType.TEAM,
+        plan: BillingPlan.SOLO,
+        deletedAt: new Date('2026-05-01T10:00:00Z'),
+      };
+      const activeTeamSubscription = {
+        id: 'team-subscription',
+        stripeDetailsId: 'team-stripe-details',
+        entityId: 'team-1',
+        entityType: EntityType.TEAM,
+        plan: BillingPlan.TEAM,
+      };
+
+      mockStripeDetailsRepository.findOne.mockResolvedValue({
+        id: 'solo-stripe-details',
+        stripeSubId: 'sub_solo',
+        stripePriceId: 'price_solo',
+      });
+      mockSubscriptionRepository.findOne.mockResolvedValue(softDeletedSubscription);
+      mockSubscriptionRepository.find.mockResolvedValue([activeTeamSubscription]);
+
+      const result = await service.syncStripeSubscription({
+        stripeSubId: 'sub_solo',
+        stripePriceId: 'price_solo',
+        entityId: 'team-1',
+        entityType: EntityType.TEAM,
+        plan: BillingPlan.SOLO,
+        status: 'active',
+        periodStart: new Date('2026-05-01T10:00:00Z'),
+        periodEnd: new Date('2026-06-01T10:00:00Z'),
+      });
+
+      expect(result).toBe(softDeletedSubscription);
+      expect(mockSubscriptionRepository.save).not.toHaveBeenCalled();
+      expect(mockTokenLedgerService.grantSubscriptionTokens).not.toHaveBeenCalled();
     });
   });
 });

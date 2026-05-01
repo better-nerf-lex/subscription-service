@@ -31,8 +31,11 @@ export class TokenStatusDto {
   activePlan: string | null;
   subscriptionStatus: string;
   subscriptionValidUntil: string | null;
+  pendingPlan: string | null;
+  pendingPlanEffectiveAt: string | null;
   nextResetAt: string | null;
   monthlyTokensRemaining: number;
+  carryoverTokensRemaining: number;
   topUpTokensRemaining: number;
   tokensRemaining: number;
 }

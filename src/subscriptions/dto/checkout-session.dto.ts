@@ -27,4 +27,7 @@ export class CreateTopUpCheckoutDto {
 export class CheckoutSessionResponseDto {
   sessionId: string;
   checkoutUrl: string;
+  action?: 'checkout_required' | 'scheduled' | 'unchanged';
+  message?: string;
+  effectiveAt?: string | null;
 }

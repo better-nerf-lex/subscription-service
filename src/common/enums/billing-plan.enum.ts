@@ -10,6 +10,7 @@ export enum TokenPack {
 
 export enum TokenGrantSource {
   SUBSCRIPTION = 'subscription',
+  CARRYOVER = 'carryover',
   TOP_UP = 'top_up',
 }
 

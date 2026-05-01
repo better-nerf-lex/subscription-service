@@ -10,6 +10,7 @@ import { EntityType } from '../common/enums/entity-type.enum';
 import { BillingPlan, TokenGrantSource } from '../common/enums/billing-plan.enum';
 import { BillingCycleService } from './billing-cycle.service';
 import { TokenLedgerService } from './token-ledger.service';
+import { StripeService } from '../webhooks/stripe.service';
 
 interface SyncStripeSubscriptionInput {
   stripeSubId: string;
@@ -23,6 +24,13 @@ interface SyncStripeSubscriptionInput {
   stripeInvoiceId?: string | null;
 }
 
+interface ScheduledPlanChangeInput {
+  subscriptionId: string;
+  pendingPlan: BillingPlan;
+  effectiveAt: Date;
+  stripeScheduleId: string;
+}
+
 @Injectable()
 export class SubscriptionsService {
   constructor(
@@ -34,6 +42,7 @@ export class SubscriptionsService {
     private readonly tokenGrantRepository: Repository<TokenGrant>,
     private readonly billingCycle: BillingCycleService,
     private readonly tokenLedgerService: TokenLedgerService,
+    private readonly stripeService: StripeService,
   ) {}
 
   /**
@@ -184,8 +193,17 @@ export class SubscriptionsService {
     const periodEnd = input.periodEnd ?? this.billingCycle.nextPeriodEnd(input.periodStart, anchorDay);
 
     let subscription = await this.subscriptionRepository.findOne({
-      where: { stripeDetailsId: stripeDetails.id, deletedAt: IsNull() },
+      where: { stripeDetailsId: stripeDetails.id },
+      withDeleted: true,
     });
+
+    if (subscription?.deletedAt) {
+      const activeSubscriptions = await this.findActiveByEntity(input.entityId, input.entityType);
+      if (activeSubscriptions.some((active) => active.stripeDetailsId !== stripeDetails.id)) {
+        return subscription;
+      }
+      subscription.deletedAt = null;
+    }
 
     if (!subscription) {
       subscription = this.subscriptionRepository.create({
@@ -195,23 +213,30 @@ export class SubscriptionsService {
       });
     }
 
+    const effectivePlan = this.resolveEffectivePlan(subscription, input.plan, input.periodStart);
+
     subscription.entityId = input.entityId;
     subscription.entityType = input.entityType;
-    subscription.plan = input.plan;
+    subscription.plan = effectivePlan;
     subscription.anchorDay = anchorDay;
     subscription.currentPeriodStart = input.periodStart;
     subscription.currentPeriodEnd = periodEnd;
     subscription.validUntil = periodEnd;
     subscription.status = input.status;
+    if (subscription.pendingPlan && effectivePlan === subscription.pendingPlan) {
+      subscription.pendingPlan = null;
+      subscription.pendingPlanEffectiveAt = null;
+      subscription.stripeScheduleId = null;
+    }
 
     const saved = await this.subscriptionRepository.save(subscription);
 
     if (input.status === 'active' || input.status === 'trialing') {
-      await this.replaceOtherActiveSubscriptions(input, saved);
+      await this.replaceOtherActiveSubscriptions(input, saved, effectivePlan);
       await this.tokenLedgerService.grantSubscriptionTokens({
         entityId: input.entityId,
         entityType: input.entityType,
-        plan: input.plan,
+        plan: effectivePlan,
         stripeSubscriptionId: input.stripeSubId,
         stripeInvoiceId: input.stripeInvoiceId ?? null,
         stripePriceId: input.stripePriceId,
@@ -223,10 +248,43 @@ export class SubscriptionsService {
     return saved;
   }
 
+  async schedulePlanChange(input: ScheduledPlanChangeInput): Promise<Subscription> {
+    const subscription = await this.findById(input.subscriptionId);
+    subscription.pendingPlan = input.pendingPlan;
+    subscription.pendingPlanEffectiveAt = input.effectiveAt;
+    subscription.stripeScheduleId = input.stripeScheduleId;
+    return this.subscriptionRepository.save(subscription);
+  }
+
+  async clearScheduledPlanChange(subscriptionId: string): Promise<Subscription> {
+    const subscription = await this.findById(subscriptionId);
+    subscription.pendingPlan = null;
+    subscription.pendingPlanEffectiveAt = null;
+    subscription.stripeScheduleId = null;
+    return this.subscriptionRepository.save(subscription);
+  }
+
+  private resolveEffectivePlan(
+    subscription: Subscription,
+    incomingPlan: BillingPlan,
+    periodStart: Date,
+  ): BillingPlan {
+    if (!subscription.pendingPlan || !subscription.pendingPlanEffectiveAt) {
+      return incomingPlan;
+    }
+
+    return periodStart >= subscription.pendingPlanEffectiveAt ? subscription.pendingPlan : incomingPlan;
+  }
+
   private async replaceOtherActiveSubscriptions(
     input: SyncStripeSubscriptionInput,
     activeSubscription: Subscription,
+    effectivePlan: BillingPlan,
   ): Promise<void> {
+    if (effectivePlan === BillingPlan.TEAM) {
+      await this.convertUnusedSoloTokensToCarryover(input, activeSubscription.id);
+    }
+
     await this.subscriptionRepository.softDelete({
       entityId: input.entityId,
       entityType: input.entityType,
@@ -241,6 +299,53 @@ export class SubscriptionsService {
       deletedAt: IsNull(),
       stripeSubscriptionId: Not(input.stripeSubId),
     });
+  }
+
+  private async convertUnusedSoloTokensToCarryover(
+    input: SyncStripeSubscriptionInput,
+    activeSubscriptionId: string,
+  ): Promise<void> {
+    const soloSubscriptions = await this.subscriptionRepository.find({
+      where: {
+        entityId: input.entityId,
+        entityType: input.entityType,
+        plan: BillingPlan.SOLO,
+        deletedAt: IsNull(),
+        validUntil: MoreThan(new Date()),
+        id: Not(activeSubscriptionId),
+      },
+      relations: ['stripeDetails'],
+    });
+
+    for (const subscription of soloSubscriptions) {
+      const stripeSubscriptionId = subscription.stripeDetails?.stripeSubId;
+      if (!stripeSubscriptionId) {
+        continue;
+      }
+
+      const grants = await this.tokenGrantRepository.find({
+        where: {
+          entityId: input.entityId,
+          entityType: input.entityType,
+          source: TokenGrantSource.SUBSCRIPTION,
+          stripeSubscriptionId,
+          deletedAt: IsNull(),
+          expiresAt: MoreThan(new Date()),
+        },
+      });
+
+      for (const grant of grants) {
+        if (grant.remainingTokens <= 0) {
+          continue;
+        }
+        grant.source = TokenGrantSource.CARRYOVER;
+        await this.tokenGrantRepository.save(grant);
+      }
+
+      await this.stripeService.client.subscriptions.update(stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+    }
   }
 
   /**

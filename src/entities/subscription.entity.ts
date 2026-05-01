@@ -40,6 +40,15 @@ export class Subscription {
   @Column({ type: 'varchar', length: 20, nullable: true })
   plan?: BillingPlan | null;
 
+  @Column({ name: 'pending_plan', type: 'varchar', length: 20, nullable: true })
+  pendingPlan?: BillingPlan | null;
+
+  @Column({ name: 'pending_plan_effective_at', type: 'timestamp', nullable: true })
+  pendingPlanEffectiveAt?: Date | null;
+
+  @Column({ name: 'stripe_schedule_id', type: 'varchar', length: 255, nullable: true })
+  stripeScheduleId?: string | null;
+
   @Column({ name: 'anchor_day', type: 'integer', default: 1 })
   anchorDay: number;
 
@@ -63,7 +72,7 @@ export class Subscription {
   updatedAt: Date;
 
   @DeleteDateColumn({ name: 'deleted_at' })
-  deletedAt?: Date;
+  deletedAt?: Date | null;
 
   // Relations
   @ManyToOne(() => StripeDetails, (stripeDetails) => stripeDetails.subscriptions, {

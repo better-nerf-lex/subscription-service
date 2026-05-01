@@ -74,6 +74,9 @@ export class TokenLedgerService {
     const monthlyTokensRemaining = grants
       .filter((grant) => grant.source === TokenGrantSource.SUBSCRIPTION)
       .reduce((sum, grant) => sum + grant.remainingTokens, 0);
+    const carryoverTokensRemaining = grants
+      .filter((grant) => grant.source === TokenGrantSource.CARRYOVER)
+      .reduce((sum, grant) => sum + grant.remainingTokens, 0);
     const topUpTokensRemaining = grants
       .filter((grant) => grant.source === TokenGrantSource.TOP_UP)
       .reduce((sum, grant) => sum + grant.remainingTokens, 0);
@@ -84,10 +87,13 @@ export class TokenLedgerService {
       activePlan: subscription?.plan ?? null,
       subscriptionStatus: subscription ? subscription.status : 'inactive',
       subscriptionValidUntil: subscription?.validUntil?.toISOString() ?? null,
+      pendingPlan: subscription?.pendingPlan ?? null,
+      pendingPlanEffectiveAt: subscription?.pendingPlanEffectiveAt?.toISOString() ?? null,
       nextResetAt: subscription?.currentPeriodEnd?.toISOString() ?? subscription?.validUntil?.toISOString() ?? null,
       monthlyTokensRemaining,
+      carryoverTokensRemaining,
       topUpTokensRemaining,
-      tokensRemaining: monthlyTokensRemaining + topUpTokensRemaining,
+      tokensRemaining: monthlyTokensRemaining + carryoverTokensRemaining + topUpTokensRemaining,
     };
   }
 
@@ -185,7 +191,7 @@ export class TokenLedgerService {
         .andWhere('grant.deleted_at IS NULL')
         .andWhere('grant.expires_at > :now', { now: new Date() })
         .andWhere('grant.remaining_tokens > 0')
-        .orderBy("CASE WHEN grant.source = 'subscription' THEN 0 ELSE 1 END", 'ASC')
+        .orderBy("CASE WHEN grant.source = 'subscription' THEN 0 WHEN grant.source = 'carryover' THEN 1 ELSE 2 END", 'ASC')
         .addOrderBy('grant.expires_at', 'ASC')
         .setLock('pessimistic_write')
         .getMany();
