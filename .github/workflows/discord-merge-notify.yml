@@ -68,7 +68,7 @@ jobs:
             function buildPullRequestPayload(sourceEvent) {
               const pullRequest = sourceEvent.pull_request;
               return {
-                username: 'GitHub Branch Notes',
+                username: 'Better Nerf Updater',
                 allowed_mentions: { parse: [] },
                 embeds: [
                   {
@@ -109,7 +109,7 @@ jobs:
               }
 
               return {
-                username: 'GitHub Branch Notes',
+                username: 'Better Nerf Updater',
                 allowed_mentions: { parse: [] },
                 embeds: [
                   {
