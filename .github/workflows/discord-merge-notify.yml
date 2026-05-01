@@ -1,6 +1,11 @@
-name: Discord Merge Notification
+name: Discord Branch Notification
 
 on:
+  push:
+    branches:
+      - dev
+      - main
+      - master
   pull_request:
     types:
       - closed
@@ -16,14 +21,17 @@ permissions:
 jobs:
   notify:
     name: Notify Discord
-    if: github.event.pull_request.merged == true
+    if: github.event_name == 'push' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - name: Send merge note
+      - name: Send branch note
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_API_URL: ${{ github.api_url }}
         run: |
           node <<'NODE'
           const fs = require('fs');
@@ -35,33 +43,17 @@ jobs:
             }
 
             const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-            const pullRequest = event.pull_request;
             const truncate = (value, max) => {
-              const text = value && value.trim() ? value.trim() : 'No PR notes provided.';
+              const text = value && value.trim() ? value.trim() : 'No notes provided.';
               return text.length > max ? `${text.slice(0, max - 3)}...` : text;
             };
+            const payload = process.env.GITHUB_EVENT_NAME === 'pull_request'
+              ? buildPullRequestPayload(event)
+              : await buildPushPayload(event);
 
-            const payload = {
-              username: 'GitHub Merge Notes',
-              allowed_mentions: { parse: [] },
-              embeds: [
-                {
-                  title: `Merged into ${pullRequest.base.ref}: #${pullRequest.number} ${pullRequest.title}`,
-                  url: pullRequest.html_url,
-                  color: pullRequest.base.ref === 'dev' ? 0x3498db : 0x2ecc71,
-                  description: truncate(pullRequest.body, 1800),
-                  fields: [
-                    { name: 'Repository', value: process.env.GITHUB_REPOSITORY, inline: true },
-                    { name: 'Target', value: pullRequest.base.ref, inline: true },
-                    { name: 'Source', value: pullRequest.head.ref, inline: true },
-                    { name: 'Author', value: pullRequest.user.login, inline: true },
-                    { name: 'Merged by', value: pullRequest.merged_by?.login ?? 'unknown', inline: true },
-                    { name: 'Merge commit', value: pullRequest.merge_commit_sha?.slice(0, 7) ?? 'unknown', inline: true },
-                  ],
-                  timestamp: pullRequest.merged_at,
-                },
-              ],
-            };
+            if (!payload) {
+              return;
+            }
 
             const response = await fetch(webhookUrl, {
               method: 'POST',
@@ -71,6 +63,90 @@ jobs:
 
             if (!response.ok) {
               throw new Error(`Discord webhook failed: ${response.status} ${await response.text()}`);
+            }
+
+            function buildPullRequestPayload(sourceEvent) {
+              const pullRequest = sourceEvent.pull_request;
+              return {
+                username: 'GitHub Branch Notes',
+                allowed_mentions: { parse: [] },
+                embeds: [
+                  {
+                    title: `Merged into ${pullRequest.base.ref}: #${pullRequest.number} ${pullRequest.title}`,
+                    url: pullRequest.html_url,
+                    color: pullRequest.base.ref === 'dev' ? 0x3498db : 0x2ecc71,
+                    description: truncate(pullRequest.body, 1800),
+                    fields: [
+                      { name: 'Repository', value: process.env.GITHUB_REPOSITORY, inline: true },
+                      { name: 'Target', value: pullRequest.base.ref, inline: true },
+                      { name: 'Source', value: pullRequest.head.ref, inline: true },
+                      { name: 'Author', value: pullRequest.user.login, inline: true },
+                      { name: 'Merged by', value: pullRequest.merged_by?.login ?? 'unknown', inline: true },
+                      { name: 'Merge commit', value: pullRequest.merge_commit_sha?.slice(0, 7) ?? 'unknown', inline: true },
+                    ],
+                    timestamp: pullRequest.merged_at,
+                  },
+                ],
+              };
+            }
+
+            async function buildPushPayload(sourceEvent) {
+              const branch = sourceEvent.ref.replace('refs/heads/', '');
+              const commits = sourceEvent.commits ?? [];
+              const headCommit = sourceEvent.head_commit;
+              if (!headCommit || isGithubMergeCommit(headCommit.message) || await hasAssociatedPullRequest(headCommit.id)) {
+                return null;
+              }
+
+              const commitLines = commits.slice(0, 8).map((commit) => {
+                const sha = commit.id.slice(0, 7);
+                const message = commit.message.split('\n')[0];
+                return `[\`${sha}\`](${commit.url}) ${truncate(message, 120)} - ${commit.author?.name ?? 'unknown'}`;
+              });
+              const extraCount = commits.length - commitLines.length;
+              if (extraCount > 0) {
+                commitLines.push(`...and ${extraCount} more commit${extraCount === 1 ? '' : 's'}.`);
+              }
+
+              return {
+                username: 'GitHub Branch Notes',
+                allowed_mentions: { parse: [] },
+                embeds: [
+                  {
+                    title: `Pushed to ${branch}: ${commits.length} commit${commits.length === 1 ? '' : 's'}`,
+                    url: sourceEvent.compare,
+                    color: branch === 'dev' ? 0x3498db : 0x2ecc71,
+                    description: commitLines.join('\n') || 'No commit details provided.',
+                    fields: [
+                      { name: 'Repository', value: process.env.GITHUB_REPOSITORY, inline: true },
+                      { name: 'Target', value: branch, inline: true },
+                      { name: 'Pushed by', value: sourceEvent.pusher?.name ?? 'unknown', inline: true },
+                    ],
+                    timestamp: new Date().toISOString(),
+                  },
+                ],
+              };
+            }
+
+            function isGithubMergeCommit(message) {
+              return /^Merge pull request #\d+ from /.test(message);
+            }
+
+            async function hasAssociatedPullRequest(sha) {
+              const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/commits/${sha}/pulls`, {
+                headers: {
+                  accept: 'application/vnd.github+json',
+                  authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                  'x-github-api-version': '2022-11-28',
+                },
+              });
+
+              if (!response.ok) {
+                return false;
+              }
+
+              const pullRequests = await response.json();
+              return pullRequests.some((pullRequest) => pullRequest.merged_at || pullRequest.state === 'closed');
             }
           }
 
