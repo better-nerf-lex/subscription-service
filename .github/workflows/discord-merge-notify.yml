@@ -1,0 +1,81 @@
+name: Discord Merge Notification
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - dev
+      - main
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    name: Notify Discord
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send merge note
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          async function main() {
+            const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+            if (!webhookUrl) {
+              throw new Error('Missing DISCORD_WEBHOOK_URL repository or organization secret');
+            }
+
+            const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+            const pullRequest = event.pull_request;
+            const truncate = (value, max) => {
+              const text = value && value.trim() ? value.trim() : 'No PR notes provided.';
+              return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+            };
+
+            const payload = {
+              username: 'GitHub Merge Notes',
+              allowed_mentions: { parse: [] },
+              embeds: [
+                {
+                  title: `Merged into ${pullRequest.base.ref}: #${pullRequest.number} ${pullRequest.title}`,
+                  url: pullRequest.html_url,
+                  color: pullRequest.base.ref === 'dev' ? 0x3498db : 0x2ecc71,
+                  description: truncate(pullRequest.body, 1800),
+                  fields: [
+                    { name: 'Repository', value: process.env.GITHUB_REPOSITORY, inline: true },
+                    { name: 'Target', value: pullRequest.base.ref, inline: true },
+                    { name: 'Source', value: pullRequest.head.ref, inline: true },
+                    { name: 'Author', value: pullRequest.user.login, inline: true },
+                    { name: 'Merged by', value: pullRequest.merged_by?.login ?? 'unknown', inline: true },
+                    { name: 'Merge commit', value: pullRequest.merge_commit_sha?.slice(0, 7) ?? 'unknown', inline: true },
+                  ],
+                  timestamp: pullRequest.merged_at,
+                },
+              ],
+            };
+
+            const response = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Discord webhook failed: ${response.status} ${await response.text()}`);
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
