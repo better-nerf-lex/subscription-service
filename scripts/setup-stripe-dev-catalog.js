@@ -15,7 +15,7 @@ const catalog = [
     productName: 'Lexai Solo',
     productLookupKey: 'lexai_solo',
     priceLookupKey: 'lexai_solo_monthly_pln',
-    unitAmount: 150,
+    unitAmount: 15000,
     currency: 'pln',
     recurring: { interval: 'month' },
   },
@@ -23,7 +23,7 @@ const catalog = [
     productName: 'Lexai Team',
     productLookupKey: 'lexai_team',
     priceLookupKey: 'lexai_team_monthly_pln',
-    unitAmount: 1300,
+    unitAmount: 130000,
     currency: 'pln',
     recurring: { interval: 'month' },
   },
@@ -31,14 +31,14 @@ const catalog = [
     productName: 'Lexai 10 Token Top-up',
     productLookupKey: 'lexai_topup_10',
     priceLookupKey: 'lexai_topup_10_pln',
-    unitAmount: 100,
+    unitAmount: 10000,
     currency: 'pln',
   },
   {
     productName: 'Lexai 100 Token Top-up',
     productLookupKey: 'lexai_topup_100',
     priceLookupKey: 'lexai_topup_100_pln',
-    unitAmount: 750,
+    unitAmount: 75000,
     currency: 'pln',
   },
 ];
@@ -88,11 +88,55 @@ async function ensureCatalogItem(item) {
   };
 }
 
+async function ensureWebhookEndpoint() {
+  const webhookUrl = process.env.STRIPE_WEBHOOK_URL;
+  if (!webhookUrl) {
+    return null;
+  }
+
+  const enabledEvents = [
+    'checkout.session.completed',
+    'customer.subscription.created',
+    'customer.subscription.updated',
+    'customer.subscription.deleted',
+    'invoice.payment_succeeded',
+    'invoice.payment_failed',
+  ];
+
+  const endpoints = await stripe.webhookEndpoints.list({ limit: 100 });
+  const existing = endpoints.data.find((endpoint) => endpoint.url === webhookUrl);
+  if (existing) {
+    await stripe.webhookEndpoints.update(existing.id, {
+      disabled: false,
+      enabled_events: enabledEvents,
+    });
+    return {
+      id: existing.id,
+      url: existing.url,
+      secret: null,
+      reused: true,
+    };
+  }
+
+  const endpoint = await stripe.webhookEndpoints.create({
+    url: webhookUrl,
+    enabled_events: enabledEvents,
+  });
+
+  return {
+    id: endpoint.id,
+    url: endpoint.url,
+    secret: endpoint.secret,
+    reused: false,
+  };
+}
+
 async function main() {
   const results = [];
   for (const item of catalog) {
     results.push(await ensureCatalogItem(item));
   }
+  const webhookEndpoint = await ensureWebhookEndpoint();
 
   const env = {
     STRIPE_PRICE_SOLO_MONTHLY: results.find((result) => result.lookupKey === 'lexai_solo_monthly_pln').priceId,
@@ -100,8 +144,11 @@ async function main() {
     STRIPE_PRICE_TOPUP_10: results.find((result) => result.lookupKey === 'lexai_topup_10_pln').priceId,
     STRIPE_PRICE_TOPUP_100: results.find((result) => result.lookupKey === 'lexai_topup_100_pln').priceId,
   };
+  if (webhookEndpoint?.secret) {
+    env.STRIPE_WEBHOOK_SECRET = webhookEndpoint.secret;
+  }
 
-  console.log(JSON.stringify(env, null, 2));
+  console.log(JSON.stringify({ ...env, webhookEndpoint }, null, 2));
 }
 
 main().catch((error) => {

@@ -36,7 +36,9 @@ export class StripeWebhookController {
         }
 
         const event = this.stripeWebhookService.constructEvent(rawBody, signature);
+        this.logger.log(`Received Stripe webhook ${event.id} (${event.type})`);
         await this.stripeWebhookService.handleEvent(event);
+        this.logger.log(`Processed Stripe webhook ${event.id} (${event.type})`);
 
         return { received: true };
     }

@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { SubscriptionsService } from './subscriptions.service';
 import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
+import { TokenGrant } from '../entities/token-grant.entity';
 import { EntityType } from '../common/enums/entity-type.enum';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { BillingCycleService } from './billing-cycle.service';
@@ -27,6 +28,10 @@ describe('SubscriptionsService', () => {
     findOne: jest.fn(),
   };
 
+  const mockTokenGrantRepository = {
+    softDelete: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -38,6 +43,10 @@ describe('SubscriptionsService', () => {
         {
           provide: getRepositoryToken(StripeDetails),
           useValue: mockStripeDetailsRepository,
+        },
+        {
+          provide: getRepositoryToken(TokenGrant),
+          useValue: mockTokenGrantRepository,
         },
         BillingCycleService,
         {

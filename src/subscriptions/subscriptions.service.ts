@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, MoreThan } from 'typeorm';
+import { Repository, IsNull, MoreThan, Not } from 'typeorm';
 import { Subscription } from '../entities/subscription.entity';
 import { StripeDetails } from '../entities/stripe-details.entity';
+import { TokenGrant } from '../entities/token-grant.entity';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { QuerySubscriptionsDto } from './dto/query-subscriptions.dto';
 import { EntityType } from '../common/enums/entity-type.enum';
-import { BillingPlan } from '../common/enums/billing-plan.enum';
+import { BillingPlan, TokenGrantSource } from '../common/enums/billing-plan.enum';
 import { BillingCycleService } from './billing-cycle.service';
 import { TokenLedgerService } from './token-ledger.service';
 
@@ -29,6 +30,8 @@ export class SubscriptionsService {
     private readonly subscriptionRepository: Repository<Subscription>,
     @InjectRepository(StripeDetails)
     private readonly stripeDetailsRepository: Repository<StripeDetails>,
+    @InjectRepository(TokenGrant)
+    private readonly tokenGrantRepository: Repository<TokenGrant>,
     private readonly billingCycle: BillingCycleService,
     private readonly tokenLedgerService: TokenLedgerService,
   ) {}
@@ -204,6 +207,7 @@ export class SubscriptionsService {
     const saved = await this.subscriptionRepository.save(subscription);
 
     if (input.status === 'active' || input.status === 'trialing') {
+      await this.replaceOtherActiveSubscriptions(input, saved);
       await this.tokenLedgerService.grantSubscriptionTokens({
         entityId: input.entityId,
         entityType: input.entityType,
@@ -217,6 +221,26 @@ export class SubscriptionsService {
     }
 
     return saved;
+  }
+
+  private async replaceOtherActiveSubscriptions(
+    input: SyncStripeSubscriptionInput,
+    activeSubscription: Subscription,
+  ): Promise<void> {
+    await this.subscriptionRepository.softDelete({
+      entityId: input.entityId,
+      entityType: input.entityType,
+      deletedAt: IsNull(),
+      id: Not(activeSubscription.id),
+    });
+
+    await this.tokenGrantRepository.softDelete({
+      entityId: input.entityId,
+      entityType: input.entityType,
+      source: TokenGrantSource.SUBSCRIPTION,
+      deletedAt: IsNull(),
+      stripeSubscriptionId: Not(input.stripeSubId),
+    });
   }
 
   /**
