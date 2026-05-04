@@ -140,8 +140,13 @@ export class BillingCheckoutService {
   }
 
   private async clearScheduledChange(subscription: Subscription): Promise<CheckoutSessionResponseDto> {
-    if (subscription.stripeScheduleId) {
-      await this.stripeService.client.subscriptionSchedules.release(subscription.stripeScheduleId);
+    if (!subscription.stripeDetails?.stripeSubId) {
+      throw new ConflictException('Cannot clear plan change for subscription without Stripe details');
+    }
+
+    const scheduleId = await this.findAttachedScheduleId(subscription.stripeDetails.stripeSubId);
+    if (scheduleId) {
+      await this.stripeService.client.subscriptionSchedules.release(scheduleId);
     }
     await this.subscriptionsService.clearScheduledPlanChange(subscription.id);
 
@@ -163,10 +168,6 @@ export class BillingCheckoutService {
       throw new ConflictException('Cannot schedule plan change without an active plan');
     }
 
-    if (subscription.stripeScheduleId) {
-      await this.stripeService.client.subscriptionSchedules.release(subscription.stripeScheduleId);
-    }
-
     const stripeSubscription = await this.stripeService.client.subscriptions.retrieve(
       subscription.stripeDetails.stripeSubId,
     );
@@ -176,13 +177,16 @@ export class BillingCheckoutService {
     }
 
     const targetPriceId = await this.ensurePlanPrice(this.billingCatalog.getPlan(targetPlan));
-    const schedule = await this.stripeService.client.subscriptionSchedules.create({
+    const attachedScheduleId = this.extractSubscriptionScheduleId(stripeSubscription);
+    const scheduleId = attachedScheduleId ?? (await this.stripeService.client.subscriptionSchedules.create({
       from_subscription: stripeSubscription.id,
-    });
-    const periodStart = this.toUnixSeconds(subscription.currentPeriodStart ?? new Date());
+    })).id;
+    const currentSchedule = await this.stripeService.client.subscriptionSchedules.retrieve(scheduleId);
+    const periodStart = currentSchedule.current_phase?.start_date
+      ?? this.toUnixSeconds(subscription.currentPeriodStart ?? new Date());
     const periodEnd = this.toUnixSeconds(effectiveAt);
 
-    await this.stripeService.client.subscriptionSchedules.update(schedule.id, {
+    await this.stripeService.client.subscriptionSchedules.update(scheduleId, {
       phases: [
         {
           start_date: periodStart,
@@ -206,7 +210,20 @@ export class BillingCheckoutService {
       ],
     });
 
-    return schedule.id;
+    return scheduleId;
+  }
+
+  private async findAttachedScheduleId(stripeSubscriptionId: string): Promise<string | null> {
+    const stripeSubscription = await this.stripeService.client.subscriptions.retrieve(stripeSubscriptionId);
+    return this.extractSubscriptionScheduleId(stripeSubscription);
+  }
+
+  private extractSubscriptionScheduleId(stripeSubscription: Stripe.Subscription): string | null {
+    const schedule = (stripeSubscription as unknown as { schedule?: string | { id?: string } | null }).schedule;
+    if (typeof schedule === 'string') {
+      return schedule;
+    }
+    return schedule?.id ?? null;
   }
 
   private async ensurePlanPrice(plan: PlanConfig): Promise<string> {
