@@ -10,9 +10,10 @@ Billing code can grant paid access or consume customer funds. When this reposito
 
 | Path | Responsibility |
 | --- | --- |
-| `src/subscriptions` | Checkout, catalog, billing cycles, subscription state, token ledger |
-| `src/webhooks` | Stripe client, signature validation, event handling |
-| `src/entities` | TypeORM persistence contracts |
+| `src/subscriptions/services` | Checkout, catalog, billing cycles, subscription state, token ledger |
+| `src/subscriptions/dto` and `src/subscriptions/types` | HTTP and workflow contracts |
+| `src/webhooks/services` | Stripe client, signature validation, event handling |
+| `src/entities/subscriptions` and `src/entities/webhooks` | TypeORM persistence contracts by owner |
 | `src/migrations` | Versioned database changes |
 | `src/config` | Database and Stripe environment configuration |
 | `src/health` | Health/readiness endpoints |
